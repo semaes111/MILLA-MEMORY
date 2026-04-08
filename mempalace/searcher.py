@@ -7,6 +7,7 @@ Returns verbatim text — the actual words, never summaries.
 """
 
 import logging
+import sys
 from pathlib import Path
 
 import chromadb
@@ -16,6 +17,20 @@ logger = logging.getLogger("mempalace_mcp")
 
 class SearchError(Exception):
     """Raised when search cannot proceed (e.g. no palace found)."""
+
+
+def _separator_line(width: int = 56) -> str:
+    """
+    Return a separator line safe for the active stdout encoding.
+
+    Windows cp1252 terminals cannot encode the Unicode box-drawing char.
+    """
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        "─".encode(encoding)
+        return "─" * width
+    except Exception:
+        return "-" * width
 
 
 def search(query: str, palace_path: str, wing: str = None, room: str = None, n_results: int = 5):
@@ -70,6 +85,7 @@ def search(query: str, palace_path: str, wing: str = None, room: str = None, n_r
     if room:
         print(f"  Room: {room}")
     print(f"{'=' * 60}\n")
+    separator = _separator_line()
 
     for i, (doc, meta, dist) in enumerate(zip(docs, metas, dists), 1):
         similarity = round(1 - dist, 3)
@@ -85,7 +101,7 @@ def search(query: str, palace_path: str, wing: str = None, room: str = None, n_r
         for line in doc.strip().split("\n"):
             print(f"      {line}")
         print()
-        print(f"  {'─' * 56}")
+        print(f"  {separator}")
 
     print()
 

@@ -4,8 +4,8 @@ test_searcher.py — Tests for the programmatic search_memories API.
 Tests the library-facing search interface (not the CLI print variant).
 """
 
-from mempalace.searcher import search_memories
-
+import io
+from mempalace.searcher import search, search_memories
 
 class TestSearchMemories:
     def test_basic_search(self, palace_path, seeded_collection):
@@ -43,3 +43,31 @@ class TestSearchMemories:
         assert "source_file" in hit
         assert "similarity" in hit
         assert isinstance(hit["similarity"], float)
+
+    def test_cli_search_uses_ascii_separator_on_cp1252_stdout(self, monkeypatch):
+        class _FakeCollection:
+            def query(self, **_kwargs):
+                return {
+                    "documents": [["JWT auth details"]],
+                    "metadatas": [[{"wing": "project", "room": "backend", "source_file": "auth.py"}]],
+                    "distances": [[0.1]],
+                }
+
+        class _FakeClient:
+            def __init__(self, path):
+                self.path = path
+
+            def get_collection(self, _name):
+                return _FakeCollection()
+
+        monkeypatch.setattr("mempalace.searcher.chromadb.PersistentClient", _FakeClient)
+
+        buf = io.BytesIO()
+        fake_stdout = io.TextIOWrapper(buf, encoding="cp1252", errors="strict")
+        monkeypatch.setattr("sys.stdout", fake_stdout)
+
+        search("anything", "/tmp/fake-palace")
+        fake_stdout.flush()
+        output = buf.getvalue().decode("cp1252")
+
+        assert "  " + ("-" * 56) in output
