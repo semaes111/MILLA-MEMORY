@@ -44,22 +44,25 @@ class TestSearchMemories:
         assert "similarity" in hit
         assert isinstance(hit["similarity"], float)
 
-    def test_cli_search_uses_ascii_separator_on_cp1252_stdout(self, monkeypatch):
-        class _FakeCollection:
-            def query(self, **_kwargs):
-                return {
-                    "documents": [["JWT auth details"]],
-                    "metadatas": [[{"wing": "project", "room": "backend", "source_file": "auth.py"}]],
-                    "distances": [[0.1]],
-                }
+class _FakeCollection:
+    def query(self, **_kwargs):
+        return {
+            "documents": [["JWT auth details"]],
+            "metadatas": [[{"wing": "project", "room": "backend", "source_file": "auth.py"}]],
+            "distances": [[0.1]],
+        }
 
-        class _FakeClient:
-            def __init__(self, path):
-                self.path = path
 
-            def get_collection(self, _name):
-                return _FakeCollection()
+class _FakeClient:
+    def __init__(self, path):
+        self.path = path
 
+    def get_collection(self, _name):
+        return _FakeCollection()
+
+
+class TestSearchCli:
+    def test_uses_ascii_separator_on_cp1252_stdout(self, monkeypatch):
         monkeypatch.setattr("mempalace.searcher.chromadb.PersistentClient", _FakeClient)
 
         buf = io.BytesIO()
@@ -71,3 +74,16 @@ class TestSearchMemories:
         output = buf.getvalue().decode("cp1252")
 
         assert "  " + ("-" * 56) in output
+
+    def test_uses_unicode_separator_on_utf8_stdout(self, monkeypatch):
+        monkeypatch.setattr("mempalace.searcher.chromadb.PersistentClient", _FakeClient)
+
+        buf = io.BytesIO()
+        fake_stdout = io.TextIOWrapper(buf, encoding="utf-8")
+        monkeypatch.setattr("sys.stdout", fake_stdout)
+
+        search("anything", "/tmp/fake-palace")
+        fake_stdout.flush()
+        output = buf.getvalue().decode("utf-8")
+
+        assert "  " + ("─" * 56) in output

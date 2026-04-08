@@ -15,6 +15,8 @@ import yaml
 from pathlib import Path
 from collections import defaultdict
 
+from mempalace.output import safe_separator
+
 # Common room patterns — detected from folder names and filenames
 # Format: {folder_keyword: room_name}
 FOLDER_ROOM_MAP = {
@@ -212,7 +214,7 @@ def print_proposed_structure(project_name: str, rooms: list, total_files: int, s
     for room in rooms:
         print(f"    ROOM: {room['name']}")
         print(f"          {room['description']}")
-    print(f"\n{'─' * 55}")
+    print(f"\n{safe_separator(55)}")
 
 
 def get_user_approval(rooms: list) -> list:

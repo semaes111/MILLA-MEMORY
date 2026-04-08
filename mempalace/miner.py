@@ -17,6 +17,8 @@ from collections import defaultdict
 
 import chromadb
 
+from mempalace.output import safe_separator
+
 READABLE_EXTENSIONS = {
     ".txt",
     ".md",
@@ -596,7 +598,7 @@ def mine(
         print("  .gitignore: DISABLED")
     if include_ignored:
         print(f"  Include: {', '.join(sorted(normalize_include_paths(include_ignored)))}")
-    print(f"{'─' * 55}\n")
+    print(f"{safe_separator(55)}\n")
 
     if not dry_run:
         collection = get_collection(palace_path)
