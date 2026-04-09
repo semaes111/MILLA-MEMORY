@@ -273,6 +273,20 @@ class TestWriteTools:
         assert result["room"] == "test_room"
         assert result["drawer_id"].startswith("drawer_test_wing_test_room_")
 
+        col = _get_collection(palace_path)
+        stored = col.get(ids=[result["drawer_id"]], include=["metadatas", "documents"])
+        meta = stored["metadatas"][0]
+        assert meta["source_type"] == "manual_drawer"
+        assert meta["memory_type"] == "manual_drawer"
+        assert meta["hall"] == "hall_manual"
+        assert meta["importance"] == 3
+        assert meta["confidence"] == 1.0
+        assert meta["closet_id"].startswith("closet_test_wing_test_room_")
+        assert meta["source_group_id"] == "manual_drawer:test_wing:test_room"
+        assert meta["content_hash"]
+        assert meta["source_updated_at"] == ""
+        assert meta["chunk_index"] == 0
+
     def test_add_drawer_duplicate_detection(self, monkeypatch, config, palace_path, kg):
         _patch_mcp_server(monkeypatch, config, kg)
         _client, _col = _get_collection(palace_path, create=True)
@@ -390,6 +404,7 @@ class TestDiaryTools:
         assert w["success"] is True
         assert w["agent"] == "TestAgent"
 
+        col = _get_collection(palace_path)
         r = tool_diary_read(agent_name="TestAgent")
         assert r["total"] == 1
         assert r["entries"][0]["topic"] == "architecture"

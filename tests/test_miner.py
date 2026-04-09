@@ -47,6 +47,24 @@ def test_project_mining():
         client = chromadb.PersistentClient(path=str(palace_path))
         col = client.get_collection("mempalace_drawers")
         assert col.count() > 0
+
+        stored = col.get(include=["metadatas", "documents"], limit=1)
+        meta = stored["metadatas"][0]
+        assert meta["wing"] == "test_project"
+        assert meta["room"] == "backend"
+        assert meta["source_type"] == "project_file"
+        assert meta["memory_type"] == "project_chunk"
+        assert meta["hall"] == "hall_project"
+        assert meta["importance"] == 3
+        assert meta["confidence"] == 1.0
+        assert meta["closet_id"].startswith("closet_test_project_backend_")
+        assert meta["source_group_id"].startswith("project_file_")
+        assert meta["content_hash"]
+        assert meta["source_updated_at"]
+        assert meta["source_file"].endswith("backend/app.py")
+        assert meta["chunk_index"] == 0
+        assert meta["added_by"] == "mempalace"
+        assert meta["filed_at"]
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 

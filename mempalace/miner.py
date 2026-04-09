@@ -17,7 +17,7 @@ from collections import defaultdict
 
 import chromadb
 
-from .palace import SKIP_DIRS, get_collection, file_already_mined
+from .writer import add_collection_drawer, build_drawer_id, build_shared_metadata
 
 READABLE_EXTENSIONS = {
     ".txt",
@@ -42,6 +42,32 @@ READABLE_EXTENSIONS = {
     ".toml",
 }
 
+SKIP_DIRS = {
+    ".git",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "env",
+    "dist",
+    "build",
+    ".next",
+    "coverage",
+    ".mempalace",
+    ".ruff_cache",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".cache",
+    ".tox",
+    ".nox",
+    ".idea",
+    ".vscode",
+    ".ipynb_checkpoints",
+    ".eggs",
+    "htmlcov",
+    "target",
+}
+
 SKIP_FILENAMES = {
     "mempalace.yaml",
     "mempalace.yml",
@@ -54,7 +80,6 @@ SKIP_FILENAMES = {
 CHUNK_SIZE = 800  # chars per drawer
 CHUNK_OVERLAP = 100  # overlap between chunks
 MIN_CHUNK_SIZE = 50  # skip tiny chunks
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB — skip files larger than this
 
 
 # =============================================================================
@@ -370,32 +395,49 @@ def chunk_text(content: str, source_file: str) -> list:
 # =============================================================================
 
 
+def get_collection(palace_path: str):
+    os.makedirs(palace_path, exist_ok=True)
+    client = chromadb.PersistentClient(path=palace_path)
+    try:
+        return client.get_collection("mempalace_drawers")
+    except Exception:
+        return client.create_collection(
+            "mempalace_drawers", metadata={"hnsw:space": "cosine"}
+        )
+
+
+def file_already_mined(collection, source_file: str) -> bool:
+    """Fast check: has this file been filed before?"""
+    try:
+        results = collection.get(where={"source_file": source_file}, limit=1)
+        return len(results.get("ids", [])) > 0
+    except Exception:
+        return False
+
+
 def add_drawer(
     collection, wing: str, room: str, content: str, source_file: str, chunk_index: int, agent: str
 ):
     """Add one drawer to the palace."""
-    drawer_id = f"drawer_{wing}_{room}_{hashlib.sha256((source_file + str(chunk_index)).encode()).hexdigest()[:24]}"
+    drawer_id = build_drawer_id(wing, room, source_file=source_file, chunk_index=chunk_index)
+    metadata = build_shared_metadata(
+        wing=wing,
+        room=room,
+        content=content,
+        source_file=source_file,
+        chunk_index=chunk_index,
+        added_by=agent,
+        source_type="project_file",
+        hall="hall_project",
+        memory_type="project_chunk",
+        source_updated_at=source_file,
+    )
     try:
-        metadata = {
-            "wing": wing,
-            "room": room,
-            "source_file": source_file,
-            "chunk_index": chunk_index,
-            "added_by": agent,
-            "filed_at": datetime.now().isoformat(),
-        }
-        # Store file mtime so we can detect modifications later.
-        try:
-            metadata["source_mtime"] = os.path.getmtime(source_file)
-        except OSError:
-            pass
-        collection.upsert(
-            documents=[content],
-            ids=[drawer_id],
-            metadatas=[metadata],
-        )
+        add_collection_drawer(collection, drawer_id, content, metadata)
         return True
-    except Exception:
+    except Exception as e:
+        if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+            return False
         raise
 
 
@@ -412,29 +454,29 @@ def process_file(
     rooms: list,
     agent: str,
     dry_run: bool,
-) -> tuple:
-    """Read, chunk, route, and file one file. Returns (drawer_count, room_name)."""
+) -> int:
+    """Read, chunk, route, and file one file. Returns drawer count."""
 
     # Skip if already filed
     source_file = str(filepath)
-    if not dry_run and file_already_mined(collection, source_file, check_mtime=True):
-        return 0, None
+    if not dry_run and file_already_mined(collection, source_file):
+        return 0
 
     try:
         content = filepath.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return 0, None
+        return 0
 
     content = content.strip()
     if len(content) < MIN_CHUNK_SIZE:
-        return 0, None
+        return 0
 
     room = detect_room(filepath, content, rooms, project_path)
     chunks = chunk_text(content, source_file)
 
     if dry_run:
         print(f"    [DRY RUN] {filepath.name} → room:{room} ({len(chunks)} drawers)")
-        return len(chunks), room
+        return len(chunks)
 
     drawers_added = 0
     for chunk in chunks:
@@ -450,7 +492,7 @@ def process_file(
         if added:
             drawers_added += 1
 
-    return drawers_added, room
+    return drawers_added
 
 
 # =============================================================================
@@ -509,15 +551,6 @@ def scan_project(
             if respect_gitignore and active_matchers and not force_include:
                 if is_gitignored(filepath, active_matchers, is_dir=False):
                     continue
-            # Skip symlinks — prevents following links to /dev/urandom, etc.
-            if filepath.is_symlink():
-                continue
-            # Skip files exceeding size limit
-            try:
-                if filepath.stat().st_size > MAX_FILE_SIZE:
-                    continue
-            except OSError:
-                continue
             files.append(filepath)
     return files
 
@@ -578,7 +611,7 @@ def mine(
     room_counts = defaultdict(int)
 
     for i, filepath in enumerate(files, 1):
-        drawers, room = process_file(
+        drawers = process_file(
             filepath=filepath,
             project_path=project_path,
             collection=collection,
@@ -591,6 +624,7 @@ def mine(
             files_skipped += 1
         else:
             total_drawers += drawers
+            room = detect_room(filepath, "", rooms, project_path)
             room_counts[room] += 1
             if not dry_run:
                 print(f"  ✓ [{i:4}/{len(files)}] {filepath.name[:50]:50} +{drawers}")
