@@ -146,10 +146,12 @@ class TestSearchCLI:
         fake_stdout = io.TextIOWrapper(buf, encoding="cp1252", errors="strict")
         monkeypatch.setattr("sys.stdout", fake_stdout)
 
-        search("anything", "/tmp/fake-palace")
-        fake_stdout.flush()
-        output = buf.getvalue().decode("cp1252")
+        try:
+            search("anything", "/tmp/fake-palace")
+        finally:
+            fake_stdout.flush()
 
+        output = buf.getvalue().decode("cp1252")
         assert "  " + ("-" * 56) in output
 
     def test_uses_unicode_separator_on_utf8_stdout(self, monkeypatch):
@@ -159,8 +161,10 @@ class TestSearchCLI:
         fake_stdout = io.TextIOWrapper(buf, encoding="utf-8")
         monkeypatch.setattr("sys.stdout", fake_stdout)
 
-        search("anything", "/tmp/fake-palace")
-        fake_stdout.flush()
-        output = buf.getvalue().decode("utf-8")
+        try:
+            search("anything", "/tmp/fake-palace")
+        finally:
+            fake_stdout.flush()
 
+        output = buf.getvalue().decode("utf-8")
         assert "  " + ("─" * 56) in output

@@ -17,7 +17,7 @@ from collections import defaultdict
 
 import chromadb
 
-from mempalace.output import safe_separator
+from .output import safe_separator
 from .palace import SKIP_DIRS, get_collection, file_already_mined
 
 READABLE_EXTENSIONS = {

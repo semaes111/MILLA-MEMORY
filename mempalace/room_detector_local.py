@@ -15,7 +15,7 @@ import yaml
 from pathlib import Path
 from collections import defaultdict
 
-from mempalace.output import safe_separator
+from .output import safe_separator
 
 # Common room patterns — detected from folder names and filenames
 # Format: {folder_keyword: room_name}
