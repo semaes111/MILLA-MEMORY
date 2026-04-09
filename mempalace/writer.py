@@ -27,7 +27,7 @@ def _slug(value: str) -> str:
 
 
 def resolve_source_updated_at(source: Any = None) -> str:
-    if source is None:
+    if source in (None, ""):
         return ""
     if isinstance(source, datetime):
         return source.isoformat()

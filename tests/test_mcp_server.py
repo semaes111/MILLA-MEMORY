@@ -273,7 +273,7 @@ class TestWriteTools:
         assert result["room"] == "test_room"
         assert result["drawer_id"].startswith("drawer_test_wing_test_room_")
 
-        col = _get_collection(palace_path)
+        _client, col = _get_collection(palace_path)
         stored = col.get(ids=[result["drawer_id"]], include=["metadatas", "documents"])
         meta = stored["metadatas"][0]
         assert meta["source_type"] == "manual_drawer"
