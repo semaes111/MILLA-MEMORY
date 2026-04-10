@@ -15,9 +15,6 @@ from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
 
-import chromadb
-
-from .config import get_embedding_function
 from .palace import SKIP_DIRS, get_collection, file_already_mined
 
 READABLE_EXTENSIONS = {
@@ -625,10 +622,10 @@ def mine(
 
 def status(palace_path: str):
     """Show what's been filed in the palace."""
+    from .palace import iter_all_metadatas, get_collection as _palace_get_collection
+
     try:
-        ef = get_embedding_function()
-        client = chromadb.PersistentClient(path=palace_path)
-        col = client.get_collection("mempalace_drawers", embedding_function=ef)
+        col = _palace_get_collection(palace_path)
     except Exception:
         print(f"\n  No palace found at {palace_path}")
         print("  Run: mempalace init <dir> then mempalace mine <dir>")
