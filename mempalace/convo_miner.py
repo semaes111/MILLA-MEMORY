@@ -394,22 +394,7 @@ def mine_convos(
                 },
             )
             try:
-                collection.upsert(
-                    documents=[chunk["content"]],
-                    ids=[drawer_id],
-                    metadatas=[
-                        {
-                            "wing": wing,
-                            "room": chunk_room,
-                            "source_file": source_file,
-                            "chunk_index": chunk["chunk_index"],
-                            "added_by": agent,
-                            "filed_at": datetime.now().isoformat(),
-                            "ingest_mode": "convos",
-                            "extract_mode": extract_mode,
-                        }
-                    ],
-                )
+                add_collection_drawer(collection, drawer_id, chunk["content"], metadata)
                 drawers_added += 1
             except Exception as e:
                 if "already exists" not in str(e).lower():

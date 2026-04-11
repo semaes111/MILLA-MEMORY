@@ -23,6 +23,8 @@ import logging
 import hashlib
 from datetime import datetime
 
+SUPPORTED_PROTOCOL_VERSIONS = ["2025-11-25", "2025-03-26", "2024-11-05"]
+
 from .config import MempalaceConfig
 from .version import __version__
 from .searcher import search_memories
@@ -704,11 +706,18 @@ def handle_request(request):
     req_id = request.get("id")
 
     if method == "initialize":
+        client_version = params.get("protocolVersion")
+        if client_version in SUPPORTED_PROTOCOL_VERSIONS:
+            protocol_version = client_version
+        elif client_version:
+            protocol_version = SUPPORTED_PROTOCOL_VERSIONS[0]
+        else:
+            protocol_version = SUPPORTED_PROTOCOL_VERSIONS[-1]
         return {
             "jsonrpc": "2.0",
             "id": req_id,
             "result": {
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": protocol_version,
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "mempalace", "version": __version__},
             },
@@ -728,7 +737,7 @@ def handle_request(request):
         }
     elif method == "tools/call":
         tool_name = params.get("name")
-        tool_args = params.get("arguments", {})
+        tool_args = params.get("arguments") or {}
         if tool_name not in TOOLS:
             return {
                 "jsonrpc": "2.0",

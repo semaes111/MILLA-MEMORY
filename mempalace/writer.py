@@ -69,7 +69,7 @@ def build_drawer_id(
     content: Optional[str] = None,
     filed_at: Optional[str] = None,
 ) -> str:
-    if source_file is not None:
+    if source_file:
         seed = f"{source_file}{chunk_index}"
     else:
         seed = f"{(content or '')[:100]}{filed_at or ''}"
@@ -121,7 +121,15 @@ def build_shared_metadata(
     }
 
     if extra_metadata:
-        metadata.update({key: value for key, value in extra_metadata.items() if value is not None})
+        protected_keys = frozenset(metadata.keys())
+        for key, value in extra_metadata.items():
+            if value is None:
+                continue
+            if key in protected_keys:
+                raise ValueError(
+                    f"extra_metadata key '{key}' conflicts with core metadata field"
+                )
+            metadata[key] = value
 
     return metadata
 
