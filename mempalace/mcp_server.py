@@ -143,15 +143,13 @@ def tool_status():
     count = col.count()
     wings = {}
     rooms = {}
-    try:
-        all_meta = col.get(include=["metadatas"], limit=10000)["metadatas"]
-        for m in all_meta:
-            w = m.get("wing", "unknown")
-            r = m.get("room", "unknown")
-            wings[w] = wings.get(w, 0) + 1
-            rooms[r] = rooms.get(r, 0) + 1
-    except Exception:
-        pass
+    # Issue #171: paginate through the shared generator so >10k palaces don't
+    # truncate, and let exceptions propagate instead of masking them as {}.
+    for m in _iter_all_metadatas(col):
+        w = m.get("wing", "unknown")
+        r = m.get("room", "unknown")
+        wings[w] = wings.get(w, 0) + 1
+        rooms[r] = rooms.get(r, 0) + 1
     return {
         "total_drawers": count,
         "wings": wings,
@@ -195,18 +193,34 @@ Read AAAK naturally — expand codes mentally, treat *markers* as emotional cont
 When WRITING AAAK: use entity codes, mark emotions, keep structure tight."""
 
 
+def _iter_all_metadatas(col, where=None):
+    """Yield every drawer's metadata, paginating so palaces with >10k drawers
+    don't silently truncate. Logs and re-raises on error so callers never
+    receive partial data presented as a full result. Issue #171."""
+    PAGE, offset = 10000, 0
+    try:
+        while True:
+            kwargs = {"include": ["metadatas"], "limit": PAGE, "offset": offset}
+            if where:
+                kwargs["where"] = where
+            metas = col.get(**kwargs).get("metadatas") or []
+            yield from (m for m in metas if m is not None)
+            if len(metas) < PAGE:
+                return
+            offset += PAGE
+    except Exception as e:
+        logger.error("metadata iteration failed at offset %d: %s", offset, e)
+        raise
+
+
 def tool_list_wings():
     col = _get_collection()
     if not col:
         return _no_palace()
     wings = {}
-    try:
-        all_meta = col.get(include=["metadatas"], limit=10000)["metadatas"]
-        for m in all_meta:
-            w = m.get("wing", "unknown")
-            wings[w] = wings.get(w, 0) + 1
-    except Exception:
-        pass
+    for m in _iter_all_metadatas(col):
+        w = m.get("wing", "unknown")
+        wings[w] = wings.get(w, 0) + 1
     return {"wings": wings}
 
 
@@ -215,16 +229,9 @@ def tool_list_rooms(wing: str = None):
     if not col:
         return _no_palace()
     rooms = {}
-    try:
-        kwargs = {"include": ["metadatas"], "limit": 10000}
-        if wing:
-            kwargs["where"] = {"wing": wing}
-        all_meta = col.get(**kwargs)["metadatas"]
-        for m in all_meta:
-            r = m.get("room", "unknown")
-            rooms[r] = rooms.get(r, 0) + 1
-    except Exception:
-        pass
+    for m in _iter_all_metadatas(col, where={"wing": wing} if wing else None):
+        r = m.get("room", "unknown")
+        rooms[r] = rooms.get(r, 0) + 1
     return {"wing": wing or "all", "rooms": rooms}
 
 
@@ -233,16 +240,10 @@ def tool_get_taxonomy():
     if not col:
         return _no_palace()
     taxonomy = {}
-    try:
-        all_meta = col.get(include=["metadatas"], limit=10000)["metadatas"]
-        for m in all_meta:
-            w = m.get("wing", "unknown")
-            r = m.get("room", "unknown")
-            if w not in taxonomy:
-                taxonomy[w] = {}
-            taxonomy[w][r] = taxonomy[w].get(r, 0) + 1
-    except Exception:
-        pass
+    for m in _iter_all_metadatas(col):
+        rooms = taxonomy.setdefault(m.get("wing", "unknown"), {})
+        r = m.get("room", "unknown")
+        rooms[r] = rooms.get(r, 0) + 1
     return {"taxonomy": taxonomy}
 
 
