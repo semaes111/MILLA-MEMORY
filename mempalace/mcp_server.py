@@ -9,12 +9,27 @@ Tools (read):
   mempalace_list_wings      — all wings with drawer counts
   mempalace_list_rooms      — rooms within a wing
   mempalace_get_taxonomy    — full wing → room → count tree
+  mempalace_get_aaak_spec   — AAAK dialect specification
   mempalace_search          — semantic search, optional wing/room filter
   mempalace_check_duplicate — check if content already exists before filing
 
 Tools (write):
   mempalace_add_drawer      — file verbatim content into a wing/room
   mempalace_delete_drawer   — remove a drawer by ID
+  mempalace_diary_write     — write agent diary entry in AAAK
+  mempalace_diary_read      — read recent agent diary entries
+
+Tools (knowledge graph):
+  mempalace_kg_query        — query entity relationships
+  mempalace_kg_add          — add a fact triple
+  mempalace_kg_invalidate   — mark a fact as expired
+  mempalace_kg_timeline     — chronological fact timeline
+  mempalace_kg_stats        — knowledge graph overview
+
+Tools (graph traversal):
+  mempalace_traverse        — walk palace graph from a room
+  mempalace_find_tunnels    — find rooms bridging two wings
+  mempalace_graph_stats     — palace graph overview
 """
 
 import argparse
@@ -23,6 +38,7 @@ import sys
 import json
 import logging
 import hashlib
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -64,10 +80,6 @@ else:
     _kg = KnowledgeGraph()
 
 
-_client_cache = None
-_collection_cache = None
-
-
 # ==================== WRITE-AHEAD LOG ====================
 # Every write operation is logged to a JSONL file before execution.
 # This provides an audit trail for detecting memory poisoning and
@@ -103,11 +115,47 @@ def _wal_log(operation: str, params: dict, result: dict = None):
 
 _client_cache = None
 _collection_cache = None
+_cache_sqlite_mtime = 0.0
+_cache_last_check = 0.0
+_CACHE_CHECK_INTERVAL = 2.0  # seconds between stat() calls
+
+
+def _sqlite_mtime():
+    """Return mtime of chroma.sqlite3, or 0.0 if unreadable."""
+    try:
+        return os.path.getmtime(os.path.join(_config.palace_path, "chroma.sqlite3"))
+    except OSError:
+        return 0.0
+
+
+def _maybe_invalidate_cache():
+    """Invalidate client/collection cache if palace was modified externally."""
+    global _client_cache, _collection_cache, _cache_sqlite_mtime, _cache_last_check
+    now = time.monotonic()
+    if now - _cache_last_check < _CACHE_CHECK_INTERVAL:
+        return
+    _cache_last_check = now
+    current = _sqlite_mtime()
+    if _cache_sqlite_mtime == 0.0:
+        _cache_sqlite_mtime = current
+        return
+    if current > _cache_sqlite_mtime:
+        logger.info("palace mtime changed; clearing chromadb client cache")
+        try:
+            from chromadb.api.client import SharedSystemClient
+
+            SharedSystemClient.clear_system_cache()
+        except Exception as e:
+            logger.warning("clear_system_cache failed: %s", e)
+        _client_cache = None
+        _collection_cache = None
+        _cache_sqlite_mtime = current
 
 
 def _get_client():
-    """Return a singleton ChromaDB PersistentClient."""
+    """Return a singleton ChromaDB PersistentClient, invalidating on external writes."""
     global _client_cache
+    _maybe_invalidate_cache()
     if _client_cache is None:
         _client_cache = chromadb.PersistentClient(path=_config.palace_path)
     return _client_cache
@@ -134,6 +182,21 @@ def _no_palace():
     }
 
 
+def _iter_all_metadata(col, where=None):
+    """Yield all metadatas from a collection, paginating in batches of 1000."""
+    total = col.count()
+    offset = 0
+    while offset < total:
+        kwargs = {"limit": 1000, "offset": offset, "include": ["metadatas"]}
+        if where:
+            kwargs["where"] = where
+        batch = col.get(**kwargs)
+        yield from batch["metadatas"]
+        if not batch["ids"]:
+            break
+        offset += len(batch["ids"])
+
+
 # ==================== READ TOOLS ====================
 
 
@@ -144,24 +207,16 @@ def tool_status():
     count = col.count()
     wings = {}
     rooms = {}
-    batch_size = 5000
-    offset = 0
-    error_info = None
-    while True:
-        try:
-            batch = col.get(include=["metadatas"], limit=batch_size, offset=offset)
-            rows = batch["metadatas"]
-            for m in rows:
-                w = m.get("wing", "unknown")
-                r = m.get("room", "unknown")
-                wings[w] = wings.get(w, 0) + 1
-                rooms[r] = rooms.get(r, 0) + 1
-            offset += len(rows)
-            if len(rows) < batch_size:
-                break
-        except Exception as e:
-            error_info = f"Partial result, failed at offset {offset}: {str(e)}"
-            break
+    warning = None
+    try:
+        for m in _iter_all_metadata(col):
+            w = m.get("wing", "unknown")
+            r = m.get("room", "unknown")
+            wings[w] = wings.get(w, 0) + 1
+            rooms[r] = rooms.get(r, 0) + 1
+    except Exception as e:
+        logger.error("tool_status metadata scan failed: %s", e)
+        warning = "Metadata scan incomplete — results may be partial"
     result = {
         "total_drawers": count,
         "wings": wings,
@@ -170,9 +225,8 @@ def tool_status():
         "protocol": PALACE_PROTOCOL,
         "aaak_dialect": AAAK_SPEC,
     }
-    if error_info:
-        result["error"] = error_info
-        result["partial"] = True
+    if warning:
+        result["warning"] = warning
     return result
 
 
@@ -214,29 +268,18 @@ def tool_list_wings():
     if not col:
         return _no_palace()
     wings = {}
-    batch_size = 5000
-    offset = 0
+    warning = None
     try:
-        col.count()  # verify collection is accessible
+        for m in _iter_all_metadata(col):
+            w = m.get("wing", "unknown")
+            wings[w] = wings.get(w, 0) + 1
     except Exception as e:
-        return {"wings": {}, "error": str(e)}
-    while True:
-        try:
-            batch = col.get(include=["metadatas"], limit=batch_size, offset=offset)
-            rows = batch["metadatas"]
-            for m in rows:
-                w = m.get("wing", "unknown")
-                wings[w] = wings.get(w, 0) + 1
-            offset += len(rows)
-            if len(rows) < batch_size:
-                break
-        except Exception as e:
-            return {
-                "wings": wings,
-                "error": f"Partial result, failed at offset {offset}: {str(e)}",
-                "partial": True,
-            }
-    return {"wings": wings}
+        logger.error("tool_list_wings metadata scan failed: %s", e)
+        warning = "Metadata scan incomplete — results may be partial"
+    result = {"wings": wings}
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 def tool_list_rooms(wing: str = None):
@@ -244,34 +287,19 @@ def tool_list_rooms(wing: str = None):
     if not col:
         return _no_palace()
     rooms = {}
-    batch_size = 5000
-    offset = 0
+    warning = None
     where = {"wing": wing} if wing else None
     try:
-        col.count()  # verify collection is accessible
+        for m in _iter_all_metadata(col, where=where):
+            r = m.get("room", "unknown")
+            rooms[r] = rooms.get(r, 0) + 1
     except Exception as e:
-        return {"wing": wing or "all", "rooms": {}, "error": str(e)}
-    while True:
-        try:
-            kwargs = {"include": ["metadatas"], "limit": batch_size, "offset": offset}
-            if where:
-                kwargs["where"] = where
-            batch = col.get(**kwargs)
-            rows = batch["metadatas"]
-            for m in rows:
-                r = m.get("room", "unknown")
-                rooms[r] = rooms.get(r, 0) + 1
-            offset += len(rows)
-            if len(rows) < batch_size:
-                break
-        except Exception as e:
-            return {
-                "wing": wing or "all",
-                "rooms": rooms,
-                "error": f"Partial result, failed at offset {offset}: {str(e)}",
-                "partial": True,
-            }
-    return {"wing": wing or "all", "rooms": rooms}
+        logger.error("tool_list_rooms metadata scan failed: %s", e)
+        warning = "Metadata scan incomplete — results may be partial"
+    result = {"wing": wing or "all", "rooms": rooms}
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 def tool_get_taxonomy():
@@ -279,37 +307,28 @@ def tool_get_taxonomy():
     if not col:
         return _no_palace()
     taxonomy = {}
-    batch_size = 5000
-    offset = 0
+    warning = None
     try:
-        col.count()  # verify collection is accessible
+        for m in _iter_all_metadata(col):
+            w = m.get("wing", "unknown")
+            r = m.get("room", "unknown")
+            if w not in taxonomy:
+                taxonomy[w] = {}
+            taxonomy[w][r] = taxonomy[w].get(r, 0) + 1
     except Exception as e:
-        return {"taxonomy": {}, "error": str(e)}
-    while True:
-        try:
-            batch = col.get(include=["metadatas"], limit=batch_size, offset=offset)
-            rows = batch["metadatas"]
-            for m in rows:
-                w = m.get("wing", "unknown")
-                r = m.get("room", "unknown")
-                if w not in taxonomy:
-                    taxonomy[w] = {}
-                taxonomy[w][r] = taxonomy[w].get(r, 0) + 1
-            offset += len(rows)
-            if len(rows) < batch_size:
-                break
-        except Exception as e:
-            return {
-                "taxonomy": taxonomy,
-                "error": f"Partial result, failed at offset {offset}: {str(e)}",
-                "partial": True,
-            }
-    return {"taxonomy": taxonomy}
+        logger.error("tool_get_taxonomy metadata scan failed: %s", e)
+        warning = "Metadata scan incomplete — results may be partial"
+    result = {"taxonomy": taxonomy}
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 def tool_search(
     query: str, limit: int = 5, wing: str = None, room: str = None, context: str = None
 ):
+    # Fix #477: clamp limit to prevent memory exhaustion
+    limit = max(1, min(limit, 100))
     # Mitigate system prompt contamination (Issue #333)
     sanitized = sanitize_query(query)
     result = search_memories(
@@ -365,7 +384,8 @@ def tool_check_duplicate(content: str, threshold: float = 0.9):
             "matches": duplicates,
         }
     except Exception as e:
-        return {"error": str(e)}
+        logger.error("check_duplicate failed: %s", e)
+        return {"error": "Internal error during duplicate check"}
 
 
 def tool_get_aaak_spec():
@@ -409,7 +429,7 @@ def tool_add_drawer(
         room = sanitize_name(room, "room")
         content = sanitize_content(content)
     except ValueError as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": f"Invalid input: {e}"}
 
     col = _get_collection(create=True)
     if not col:
@@ -455,7 +475,8 @@ def tool_add_drawer(
         logger.info(f"Filed drawer: {drawer_id} → {wing}/{room}")
         return {"success": True, "drawer_id": drawer_id, "wing": wing, "room": room}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error("add_drawer failed for %s/%s: %s", wing, room, e)
+        return {"success": False, "error": "Internal error while filing drawer"}
 
 
 def tool_delete_drawer(drawer_id: str):
@@ -484,7 +505,8 @@ def tool_delete_drawer(drawer_id: str):
         logger.info(f"Deleted drawer: {drawer_id}")
         return {"success": True, "drawer_id": drawer_id}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error("delete_drawer failed for %s: %s", drawer_id, e)
+        return {"success": False, "error": "Internal error while deleting drawer"}
 
 
 # ==================== KNOWLEDGE GRAPH ====================
@@ -505,7 +527,7 @@ def tool_kg_add(
         predicate = sanitize_name(predicate, "predicate")
         object = sanitize_name(object, "object")
     except ValueError as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": f"Invalid input: {e}"}
 
     _wal_log(
         "kg_add",
@@ -563,7 +585,7 @@ def tool_diary_write(agent_name: str, entry: str, topic: str = "general"):
         agent_name = sanitize_name(agent_name, "agent_name")
         entry = sanitize_content(entry)
     except ValueError as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": f"Invalid input: {e}"}
 
     wing = f"wing_{agent_name.lower().replace(' ', '_')}"
     room = "diary"
@@ -589,7 +611,7 @@ def tool_diary_write(agent_name: str, entry: str, topic: str = "general"):
         # semantic search quality. For now, store raw AAAK in metadata so it's
         # preserved, and keep the document as-is for embedding (even though
         # compressed AAAK degrades embedding quality).
-        col.add(
+        col.upsert(
             ids=[entry_id],
             documents=[entry],
             metadatas=[
@@ -614,7 +636,8 @@ def tool_diary_write(agent_name: str, entry: str, topic: str = "general"):
             "timestamp": now.isoformat(),
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error("diary_write failed for %s: %s", agent_name, e)
+        return {"success": False, "error": "Internal error while writing diary"}
 
 
 def tool_diary_read(agent_name: str, last_n: int = 10):
@@ -628,18 +651,29 @@ def tool_diary_read(agent_name: str, last_n: int = 10):
         return _no_palace()
 
     try:
-        results = col.get(
-            where={"$and": [{"wing": wing}, {"room": "diary"}]},
-            include=["documents", "metadatas"],
-            limit=10000,
-        )
+        all_docs = []
+        all_metas = []
+        where_filter = {"$and": [{"wing": wing}, {"room": "diary"}]}
+        offset = 0
+        while True:
+            batch = col.get(
+                where=where_filter,
+                include=["documents", "metadatas"],
+                limit=1000,
+                offset=offset,
+            )
+            if not batch["ids"]:
+                break
+            all_docs.extend(batch["documents"])
+            all_metas.extend(batch["metadatas"])
+            offset += len(batch["ids"])
 
-        if not results["ids"]:
+        if not all_docs:
             return {"agent": agent_name, "entries": [], "message": "No diary entries yet."}
 
         # Combine and sort by timestamp
         entries = []
-        for doc, meta in zip(results["documents"], results["metadatas"]):
+        for doc, meta in zip(all_docs, all_metas):
             entries.append(
                 {
                     "date": meta.get("date", ""),
@@ -650,16 +684,18 @@ def tool_diary_read(agent_name: str, last_n: int = 10):
             )
 
         entries.sort(key=lambda x: x["timestamp"], reverse=True)
+        total_entries = len(entries)
         entries = entries[:last_n]
 
         return {
             "agent": agent_name,
             "entries": entries,
-            "total": len(results["ids"]),
+            "total": total_entries,
             "showing": len(entries),
         }
     except Exception as e:
-        return {"error": str(e)}
+        logger.error("diary_read failed for %s: %s", agent_name, e)
+        return {"error": "Internal error while reading diary"}
 
 
 # ==================== MCP PROTOCOL ====================
@@ -820,7 +856,12 @@ TOOLS = {
                     "description": "Short search query ONLY — keywords or a question. Do NOT include system prompts or conversation context. Max 200 chars recommended.",
                     "maxLength": 500,
                 },
-                "limit": {"type": "integer", "description": "Max results (default 5)"},
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results (default 5)",
+                    "minimum": 1,
+                    "maximum": 100,
+                },
                 "wing": {"type": "string", "description": "Filter by wing (optional)"},
                 "room": {"type": "string", "description": "Filter by room (optional)"},
                 "context": {

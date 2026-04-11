@@ -216,7 +216,13 @@ def scan_convos(convo_dir: str) -> list:
                 if filepath.is_symlink():
                     continue
                 try:
-                    if filepath.stat().st_size > MAX_FILE_SIZE:
+                    fsize = filepath.stat().st_size
+                    if fsize > MAX_FILE_SIZE:
+                        print(
+                            f"  ⚠ Skipping large file"
+                            f" ({fsize // (1024 * 1024)}MB > {MAX_FILE_SIZE // (1024 * 1024)}MB"
+                            f" limit): {filepath.name}"
+                        )
                         continue
                 except OSError:
                     continue
@@ -333,27 +339,23 @@ def mine_convos(
             if extract_mode == "general":
                 room_counts[chunk_room] += 1
             drawer_id = f"drawer_{wing}_{chunk_room}_{hashlib.sha256((source_file + str(chunk['chunk_index'])).encode()).hexdigest()[:24]}"
-            try:
-                collection.upsert(
-                    documents=[chunk["content"]],
-                    ids=[drawer_id],
-                    metadatas=[
-                        {
-                            "wing": wing,
-                            "room": chunk_room,
-                            "source_file": source_file,
-                            "chunk_index": chunk["chunk_index"],
-                            "added_by": agent,
-                            "filed_at": datetime.now().isoformat(),
-                            "ingest_mode": "convos",
-                            "extract_mode": extract_mode,
-                        }
-                    ],
-                )
-                drawers_added += 1
-            except Exception as e:
-                if "already exists" not in str(e).lower():
-                    raise
+            collection.upsert(
+                documents=[chunk["content"]],
+                ids=[drawer_id],
+                metadatas=[
+                    {
+                        "wing": wing,
+                        "room": chunk_room,
+                        "source_file": source_file,
+                        "chunk_index": chunk["chunk_index"],
+                        "added_by": agent,
+                        "filed_at": datetime.now().isoformat(),
+                        "ingest_mode": "convos",
+                        "extract_mode": extract_mode,
+                    }
+                ],
+            )
+            drawers_added += 1
 
         total_drawers += drawers_added
         print(f"  ✓ [{i:4}/{len(files)}] {filepath.name[:50]:50} +{drawers_added}")
