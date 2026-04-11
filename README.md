@@ -180,6 +180,10 @@ results = search_memories("auth decisions", palace_path="~/.mempalace/palace")
 
 Either way — your entire memory stack runs offline. ChromaDB on your machine, Llama on your machine, AAAK for compression, zero cloud calls.
 
+### Community Extensions
+
+* [**MemPalace STAN Extension**](https://github.com/web3guru888/mempalace-stan-extension) — Stigmergic A* Navigation (STAN) with pheromone decay. Provides biologically-inspired causal traversal and optimal pathfinding between concepts in the MemPalace knowledge graph.
+
 ---
 
 ## The Problem
