@@ -15,8 +15,6 @@ from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
 
-import chromadb
-
 from .palace import SKIP_DIRS, get_collection, file_already_mined
 
 READABLE_EXTENSIONS = {
@@ -51,8 +49,8 @@ SKIP_FILENAMES = {
     "package-lock.json",
 }
 
-CHUNK_SIZE = 800  # chars per drawer
-CHUNK_OVERLAP = 100  # overlap between chunks
+CHUNK_SIZE = int(os.environ.get("MEMPALACE_CHUNK_SIZE", 450))  # chars per drawer
+CHUNK_OVERLAP = int(os.environ.get("MEMPALACE_CHUNK_OVERLAP", 50))  # overlap between chunks
 MIN_CHUNK_SIZE = 50  # skip tiny chunks
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB — skip files larger than this
 
@@ -546,8 +544,14 @@ def mine(
     dry_run: bool = False,
     respect_gitignore: bool = True,
     include_ignored: list = None,
+    source_files: list = None,
 ):
-    """Mine a project directory into the palace."""
+    """Mine a project directory into the palace.
+
+    If *source_files* is provided, only those files are mined (skipping
+    the directory scan).  This is used by ``mempalace re-mine`` to
+    re-embed exactly the files that were in the palace before.
+    """
 
     project_path = Path(project_dir).expanduser().resolve()
     config = load_config(project_dir)
@@ -555,11 +559,14 @@ def mine(
     wing = wing_override or config["wing"]
     rooms = config.get("rooms", [{"name": "general", "description": "All project files"}])
 
-    files = scan_project(
-        project_dir,
-        respect_gitignore=respect_gitignore,
-        include_ignored=include_ignored,
-    )
+    if source_files is not None:
+        files = [Path(f) for f in source_files if os.path.isfile(f)]
+    else:
+        files = scan_project(
+            project_dir,
+            respect_gitignore=respect_gitignore,
+            include_ignored=include_ignored,
+        )
     if limit > 0:
         files = files[:limit]
 
@@ -624,9 +631,10 @@ def mine(
 
 def status(palace_path: str):
     """Show what's been filed in the palace."""
+    from .palace import iter_all_metadatas, get_collection as _palace_get_collection
+
     try:
-        client = chromadb.PersistentClient(path=palace_path)
-        col = client.get_collection("mempalace_drawers")
+        col = _palace_get_collection(palace_path)
     except Exception:
         print(f"\n  No palace found at {palace_path}")
         print("  Run: mempalace init <dir> then mempalace mine <dir>")

@@ -5,9 +5,12 @@ Priority: env vars > config file (~/.mempalace/config.json) > defaults
 """
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
+
+logger = logging.getLogger("mempalace")
 
 
 # ── Input validation ──────────────────────────────────────────────────────────
@@ -197,6 +200,42 @@ class MempalaceConfig:
                 pass
         return self._config_file
 
+    @property
+    def embedding_model(self):
+        """Configured embedding model name, or None for ChromaDB default."""
+        env_val = os.environ.get("MEMPALACE_EMBEDDING_MODEL")
+        if env_val:
+            return env_val
+        return self._file_config.get("embedding_model", None)
+
+    @property
+    def embedding_device(self):
+        """Configured embedding device ('cpu', 'mps', 'cuda', ...) or None.
+
+        When None, ``SentenceTransformerEmbeddingFunction`` picks its own
+        default (CPU).  Setting this to ``'mps'`` on Apple Silicon or
+        ``'cuda'`` on NVIDIA GPUs can dramatically speed up embedding
+        generation during ``mempalace mine``.
+        """
+        env_val = os.environ.get("MEMPALACE_EMBEDDING_DEVICE")
+        if env_val:
+            return env_val
+        return self._file_config.get("embedding_device", None)
+
+    @property
+    def force_embedding(self):
+        """Whether to bypass embedding model mismatch checks.
+
+        Priority: ``MEMPALACE_FORCE_EMBEDDING`` env var > ``config.json``
+        ``"force_embedding"`` key > ``False`` default.
+
+        Env var: ``"true"`` (case-insensitive) to enable, anything else is false.
+        """
+        env_val = os.environ.get("MEMPALACE_FORCE_EMBEDDING")
+        if env_val is not None:
+            return env_val.lower() == "true"
+        return bool(self._file_config.get("force_embedding", False))
+
     def save_people_map(self, people_map):
         """Write people_map.json to config directory.
 
@@ -207,3 +246,137 @@ class MempalaceConfig:
         with open(self._people_map_file, "w") as f:
             json.dump(people_map, f, indent=2)
         return self._people_map_file
+
+
+# ── Embedding function singleton ─────────────────────────────────────────────
+
+_embedding_function = None
+_embedding_function_resolved = False
+
+# Default model used when a device is explicitly requested but no model name
+# is configured.  This is the same underlying model ChromaDB uses by default
+# (via its ONNX runtime), so vectors remain compatible with existing palaces.
+_DEFAULT_MODEL_FOR_DEVICE = "sentence-transformers/all-MiniLM-L6-v2"
+
+
+class EmbeddingModelMismatchError(Exception):
+    """Raised when palace was created with a different embedding model."""
+
+    def __init__(self, stored_model: str, current_model: str):
+        self.stored_model = stored_model
+        self.current_model = current_model
+        super().__init__(
+            f"Embedding model mismatch.\n"
+            f"Palace was created with: {stored_model}\n"
+            f"Currently configured:    {current_model}\n\n"
+            f"To switch models, re-mine your palace:\n"
+            f"  mempalace re-mine\n\n"
+            f"Or set MEMPALACE_FORCE_EMBEDDING=true to bypass this check."
+        )
+
+
+def _resolve_model_and_device(config=None):
+    """Resolve the effective model name and device from config.
+
+    Returns (model_name, device) where model_name is None when no
+    explicit model is configured (i.e. ChromaDB default should be used).
+    """
+    cfg = config or MempalaceConfig()
+    model_name = cfg.embedding_model
+    device = cfg.embedding_device
+
+    # Ergonomic default: if the user asked for a device but didn't pick a
+    # model, use the same model ChromaDB uses by default so vectors stay
+    # compatible with existing palaces.
+    if not model_name and device:
+        model_name = _DEFAULT_MODEL_FOR_DEVICE
+
+    return model_name, device
+
+
+def get_embedding_model_name(config=None):
+    """Return the canonical identity string for the active embedding model.
+
+    Does **not** instantiate the model or touch the singleton cache.
+
+    Returns:
+        ``"chromadb-default"`` when no model/device is configured,
+        ``_DEFAULT_MODEL_FOR_DEVICE`` when only a device is set,
+        or the explicit model name string.
+    """
+    model_name, _ = _resolve_model_and_device(config)
+    if not model_name:
+        return "chromadb-default"
+    return model_name
+
+
+def get_embedding_function(config=None):
+    """Return the configured ChromaDB embedding function.
+
+    Resolution order:
+
+    1. If ``MEMPALACE_EMBEDDING_MODEL`` / ``embedding_model`` is set, use that
+       model via :class:`SentenceTransformerEmbeddingFunction`.
+    2. Else, if ``MEMPALACE_EMBEDDING_DEVICE`` / ``embedding_device`` is set
+       (e.g. ``'mps'``, ``'cuda'``), use the default model
+       ``sentence-transformers/all-MiniLM-L6-v2`` on that device.  This gives
+       Apple Silicon / NVIDIA users a GPU speedup without having to think
+       about model names, while staying vector-compatible with ChromaDB's
+       default ONNX embedder (same underlying weights).
+    3. Else, return ChromaDB's built-in ``DefaultEmbeddingFunction`` (ONNX
+       MiniLM on CPU).  Newer ChromaDB versions require an explicit embedding
+       function at collection creation time, so returning ``None`` here would
+       break ``collection.add()`` calls.
+
+    When a model is resolved, the configured device (if any) is passed through
+    to ``SentenceTransformerEmbeddingFunction``.  If ``sentence-transformers``
+    isn't installed, we log a warning and fall back to ChromaDB's default.
+
+    The result is cached so the function is only resolved once per process.
+    """
+    global _embedding_function, _embedding_function_resolved
+    if _embedding_function_resolved:
+        return _embedding_function
+
+    _embedding_function_resolved = True
+
+    model_name, device = _resolve_model_and_device(config)
+
+    if not model_name:
+        # No explicit configuration — use ChromaDB's default embedder.
+        # We must return a real callable (not None), because newer ChromaDB
+        # versions reject `embedding_function=None` at collection.add() time.
+        try:
+            from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+
+            _embedding_function = DefaultEmbeddingFunction()
+        except Exception:
+            _embedding_function = None
+        return _embedding_function
+
+    try:
+        from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+
+        kwargs = {"model_name": model_name}
+        if device:
+            kwargs["device"] = device
+
+        _embedding_function = SentenceTransformerEmbeddingFunction(**kwargs)
+        logger.info(
+            "Using embedding model: %s (device=%s)",
+            model_name,
+            device or "default",
+        )
+    except Exception:
+        logger.warning(
+            "sentence-transformers not installed — falling back to ChromaDB default. "
+            "Install with: pip install mempalace[multilingual]"
+        )
+        try:
+            from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+
+            _embedding_function = DefaultEmbeddingFunction()
+        except Exception:
+            _embedding_function = None
+
+    return _embedding_function

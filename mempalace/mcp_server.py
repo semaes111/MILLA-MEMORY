@@ -26,12 +26,17 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 
-from .config import MempalaceConfig, sanitize_name, sanitize_content
+from .config import (
+    EmbeddingModelMismatchError,
+    MempalaceConfig,
+    sanitize_name,
+    sanitize_content,
+)
 from .version import __version__
 from .query_sanitizer import sanitize_query
+from .palace import get_collection as _palace_get_collection
 from .searcher import search_memories
 from .palace_graph import traverse, find_tunnels, graph_stats
-import chromadb
 
 from .knowledge_graph import KnowledgeGraph
 
@@ -101,28 +106,20 @@ def _wal_log(operation: str, params: dict, result: dict = None):
         logger.error(f"WAL write failed: {e}")
 
 
-_client_cache = None
 _collection_cache = None
-
-
-def _get_client():
-    """Return a singleton ChromaDB PersistentClient."""
-    global _client_cache
-    if _client_cache is None:
-        _client_cache = chromadb.PersistentClient(path=_config.palace_path)
-    return _client_cache
 
 
 def _get_collection(create=False):
     """Return the ChromaDB collection, caching the client between calls."""
     global _collection_cache
     try:
-        client = _get_client()
-        if create:
-            _collection_cache = client.get_or_create_collection(_config.collection_name)
-        elif _collection_cache is None:
-            _collection_cache = client.get_collection(_config.collection_name)
+        if create or _collection_cache is None:
+            _collection_cache = _palace_get_collection(
+                _config.palace_path, _config.collection_name
+            )
         return _collection_cache
+    except EmbeddingModelMismatchError:
+        raise
     except Exception:
         return None
 
@@ -990,6 +987,17 @@ def handle_request(request):
                 "jsonrpc": "2.0",
                 "id": req_id,
                 "result": {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]},
+            }
+        except EmbeddingModelMismatchError as e:
+            logger.error(f"Embedding model mismatch in {tool_name}: {e}")
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "content": [
+                        {"type": "text", "text": json.dumps({"error": str(e)}, indent=2)}
+                    ]
+                },
             }
         except Exception:
             logger.exception(f"Tool error in {tool_name}")
