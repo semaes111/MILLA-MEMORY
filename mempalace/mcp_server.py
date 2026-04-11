@@ -31,7 +31,7 @@ from .version import __version__
 from .query_sanitizer import sanitize_query
 from .searcher import search_memories
 from .palace_graph import traverse, find_tunnels, graph_stats
-import chromadb
+from ._storage_backend import chromadb
 
 from .knowledge_graph import KnowledgeGraph
 

@@ -15,7 +15,7 @@ from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
 
-import chromadb
+from ._storage_backend import chromadb
 
 from .palace import SKIP_DIRS, get_collection, file_already_mined
 

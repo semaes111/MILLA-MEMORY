@@ -27,7 +27,7 @@ import os
 import time
 from collections import defaultdict
 
-import chromadb
+from ._storage_backend import chromadb
 
 
 COLLECTION_NAME = "mempalace_drawers"

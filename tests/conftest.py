@@ -27,9 +27,12 @@ os.environ["HOMEDRIVE"] = os.path.splitdrive(_session_tmp)[0] or "C:"
 os.environ["HOMEPATH"] = os.path.splitdrive(_session_tmp)[1] or _session_tmp
 
 # Now it is safe to import mempalace modules that trigger initialisation.
-import chromadb  # noqa: E402
 import pytest  # noqa: E402
 
+# Use the backend selector so that when MEMPAL_STORAGE=palace_store is
+# set, the seeded-collection fixture writes to the palace_store format
+# (not to ChromaDB format while the code under test reads palace_store).
+from mempalace._storage_backend import chromadb  # noqa: E402
 from mempalace.config import MempalaceConfig  # noqa: E402
 from mempalace.knowledge_graph import KnowledgeGraph  # noqa: E402
 

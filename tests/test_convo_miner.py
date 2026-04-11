@@ -1,7 +1,8 @@
 import os
 import tempfile
 import shutil
-import chromadb
+
+from mempalace._storage_backend import chromadb
 from mempalace.convo_miner import mine_convos
 
 

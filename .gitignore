@@ -6,6 +6,8 @@ __pycache__/
 .pytest_cache/
 mempal.yaml
 .a5c/
+.claude/
+benchmarks/results_*.jsonl
 
 # Environment
 .env

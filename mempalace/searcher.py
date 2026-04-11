@@ -9,7 +9,7 @@ Returns verbatim text — the actual words, never summaries.
 import logging
 from pathlib import Path
 
-import chromadb
+from ._storage_backend import chromadb
 
 logger = logging.getLogger("mempalace_mcp")
 

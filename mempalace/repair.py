@@ -32,7 +32,7 @@ import os
 import shutil
 import time
 
-import chromadb
+from ._storage_backend import chromadb
 
 
 COLLECTION_NAME = "mempalace_drawers"
