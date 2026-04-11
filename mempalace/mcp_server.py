@@ -20,6 +20,15 @@ Tools (write):
 import argparse
 import os
 import sys
+
+# MCP communicates over stdio: stdout MUST carry only JSON-RPC messages.
+# Some imports below (chromadb, onnxruntime, etc.) print banners/warnings to
+# stdout from native code, which corrupts the protocol stream and breaks
+# Claude Desktop's JSON parser. Capture the real stdout for protocol writes,
+# then redirect sys.stdout to stderr for the rest of the process.
+_real_stdout = sys.stdout
+sys.stdout = sys.stderr
+
 import json
 import logging
 import hashlib
@@ -934,8 +943,8 @@ def main():
             request = json.loads(line)
             response = handle_request(request)
             if response is not None:
-                sys.stdout.write(json.dumps(response) + "\n")
-                sys.stdout.flush()
+                _real_stdout.write(json.dumps(response) + "\n")
+                _real_stdout.flush()
         except KeyboardInterrupt:
             break
         except Exception as e:
