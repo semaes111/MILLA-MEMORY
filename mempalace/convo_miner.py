@@ -237,6 +237,7 @@ def mine_convos(
     limit: int = 0,
     dry_run: bool = False,
     extract_mode: str = "exchange",
+    filepath_filter: str = None,
 ):
     """Mine a directory of conversation files into the palace.
 
@@ -250,6 +251,8 @@ def mine_convos(
         wing = convo_path.name.lower().replace(" ", "_").replace("-", "_")
 
     files = scan_convos(convo_dir)
+    if filepath_filter:
+        files = [f for f in files if str(f) == filepath_filter]
     if limit > 0:
         files = files[:limit]
 
@@ -276,6 +279,12 @@ def mine_convos(
         # Skip if already filed
         if not dry_run and file_already_mined(collection, source_file):
             files_skipped += 1
+            continue
+
+        # Read raw content for hashing (before normalize transforms it)
+        try:
+            raw_content = filepath.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
             continue
 
         # Normalize format
@@ -326,29 +335,30 @@ def mine_convos(
         if extract_mode != "general":
             room_counts[room] += 1
 
-        # File each chunk
+        # File each chunk — hash raw content so sync can compare without normalize
+        file_hash = hashlib.md5(raw_content.encode(), usedforsecurity=False).hexdigest()
         drawers_added = 0
         for chunk in chunks:
             chunk_room = chunk.get("memory_type", room) if extract_mode == "general" else room
             if extract_mode == "general":
                 room_counts[chunk_room] += 1
             drawer_id = f"drawer_{wing}_{chunk_room}_{hashlib.sha256((source_file + str(chunk['chunk_index'])).encode()).hexdigest()[:24]}"
+            meta = {
+                "wing": wing,
+                "room": chunk_room,
+                "source_file": source_file,
+                "chunk_index": chunk["chunk_index"],
+                "added_by": agent,
+                "filed_at": datetime.now().isoformat(),
+                "ingest_mode": "convos",
+                "extract_mode": extract_mode,
+                "content_hash": file_hash,
+            }
             try:
                 collection.upsert(
                     documents=[chunk["content"]],
                     ids=[drawer_id],
-                    metadatas=[
-                        {
-                            "wing": wing,
-                            "room": chunk_room,
-                            "source_file": source_file,
-                            "chunk_index": chunk["chunk_index"],
-                            "added_by": agent,
-                            "filed_at": datetime.now().isoformat(),
-                            "ingest_mode": "convos",
-                            "extract_mode": extract_mode,
-                        }
-                    ],
+                    metadatas=[meta],
                 )
                 drawers_added += 1
             except Exception as e:

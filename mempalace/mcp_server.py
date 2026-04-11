@@ -2,7 +2,7 @@
 """
 MemPalace MCP Server — read/write palace access for Claude Code
 ================================================================
-Install: claude mcp add mempalace -- python -m mempalace.mcp_server [--palace /path/to/palace]
+Install: claude mcp add mempalace -- python -m mempalace.mcp_server
 
 Tools (read):
   mempalace_status          — total drawers, wing/room breakdown
@@ -35,6 +35,8 @@ import chromadb
 
 from .knowledge_graph import KnowledgeGraph
 
+_kg = KnowledgeGraph()
+
 logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
 logger = logging.getLogger("mempalace_mcp")
 
@@ -56,16 +58,7 @@ _args = _parse_args()
 
 if _args.palace:
     os.environ["MEMPALACE_PALACE_PATH"] = os.path.abspath(_args.palace)
-
 _config = MempalaceConfig()
-if _args.palace:
-    _kg = KnowledgeGraph(db_path=os.path.join(_config.palace_path, "knowledge_graph.sqlite3"))
-else:
-    _kg = KnowledgeGraph()
-
-
-_client_cache = None
-_collection_cache = None
 
 
 # ==================== WRITE-AHEAD LOG ====================
@@ -397,6 +390,138 @@ def tool_graph_stats():
     return graph_stats(col=col)
 
 
+# ==================== SYNC / FRESHNESS ====================
+
+
+def tool_sync_status(directory: str = None):
+    """Check palace freshness — detect stale, missing, and fresh source files.
+
+    Compares content_hash stored in drawer metadata against current file content.
+    Returns actionable re-mine commands for any stale files found.
+    """
+    import os
+    from pathlib import Path
+
+    col = _get_collection()
+    if not col:
+        return _no_palace()
+
+    total = col.count()
+    if total == 0:
+        return {"status": "empty", "message": "Palace is empty. Nothing to sync."}
+
+    # Scan all source files and their content hashes
+    source_files = {}
+    batch_size = 500
+    offset = 0
+    while offset < total:
+        batch = col.get(limit=batch_size, offset=offset, include=["metadatas"])
+        if not batch["ids"]:
+            break
+        for drawer_id, meta in zip(batch["ids"], batch["metadatas"]):
+            sf = meta.get("source_file", "")
+            if not sf:
+                continue
+            if sf not in source_files:
+                source_files[sf] = {
+                    "hash": meta.get("content_hash", ""),
+                    "drawer_count": 0,
+                    "wing": meta.get("wing", ""),
+                    "ingest_mode": meta.get("ingest_mode", ""),
+                }
+            source_files[sf]["drawer_count"] += 1
+        offset += len(batch["ids"])
+
+    # Filter by directory if specified
+    if directory:
+        dir_resolved = str(Path(directory).expanduser().resolve())
+        source_files = {
+            sf: info for sf, info in source_files.items()
+            if _resolve_path_safe(sf).startswith(dir_resolved)
+        }
+
+    stale = []
+    missing = []
+    fresh = 0
+    no_hash = 0
+
+    for sf, info in source_files.items():
+        if not os.path.exists(sf):
+            missing.append({"file": sf, "drawers": info["drawer_count"], "wing": info["wing"]})
+            continue
+        if not info["hash"]:
+            no_hash += 1
+            continue
+        try:
+            content = Path(sf).read_text(encoding="utf-8", errors="replace").strip()
+            current_hash = hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()
+        except OSError:
+            missing.append({"file": sf, "drawers": info["drawer_count"], "wing": info["wing"]})
+            continue
+        if current_hash != info["hash"]:
+            stale.append({"file": sf, "drawers": info["drawer_count"], "wing": info["wing"]})
+        else:
+            fresh += 1
+
+    # Build re-mine commands for stale files
+    remine_commands = []
+    if stale:
+        seen_dirs = set()
+        for item in stale:
+            parent = str(Path(item["file"]).parent)
+            wing = item["wing"]
+            mode = source_files[item["file"]].get("ingest_mode", "")
+            key = (parent, wing, mode)
+            if key not in seen_dirs:
+                seen_dirs.add(key)
+                cmd = f"mempalace mine {parent} --wing {wing} --force"
+                if mode == "convos":
+                    cmd = f"mempalace mine {parent} --mode convos --wing {wing} --force"
+                remine_commands.append(cmd)
+
+    result = {
+        "total_source_files": len(source_files),
+        "fresh": fresh,
+        "stale": len(stale),
+        "missing": len(missing),
+        "no_hash_legacy": no_hash,
+    }
+    if stale:
+        result["stale_files"] = [
+            {"file": Path(s["file"]).name, "drawers": s["drawers"], "wing": s["wing"]}
+            for s in stale[:20]
+        ]
+        result["remine_commands"] = remine_commands
+    if missing:
+        result["missing_files"] = [
+            {"file": Path(m["file"]).name, "drawers": m["drawers"]}
+            for m in missing[:10]
+        ]
+    if fresh == len(source_files) and not stale and not missing:
+        result["status"] = "fresh"
+        result["message"] = "All source files are up to date."
+    elif stale:
+        result["status"] = "stale"
+        result["message"] = f"{len(stale)} files changed since last mine. Run the remine_commands to refresh."
+    elif missing:
+        result["status"] = "orphaned"
+        result["message"] = f"{len(missing)} source files no longer exist. Use 'mempalace sync --clean' to remove orphaned drawers."
+    else:
+        result["status"] = "fresh"
+        result["message"] = "All source files are up to date."
+
+    return result
+
+
+def _resolve_path_safe(p: str) -> str:
+    """Resolve symlinks safely (macOS /var → /private/var)."""
+    try:
+        from pathlib import Path
+        return str(Path(p).resolve())
+    except OSError:
+        return p
+
+
 # ==================== WRITE TOOLS ====================
 
 
@@ -404,6 +529,8 @@ def tool_add_drawer(
     wing: str, room: str, content: str, source_file: str = None, added_by: str = "mcp"
 ):
     """File verbatim content into a wing/room. Checks for duplicates first."""
+    from .miner import add_drawer
+
     try:
         wing = sanitize_name(wing, "wing")
         room = sanitize_name(room, "room")
@@ -415,7 +542,9 @@ def tool_add_drawer(
     if not col:
         return _no_palace()
 
-    drawer_id = f"drawer_{wing}_{room}_{hashlib.sha256((wing + room + content[:100]).encode()).hexdigest()[:24]}"
+    # Use content-derived source so drawer ID is deterministic for idempotency
+    effective_source = source_file or f"mcp:{hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()}"
+    drawer_id = f"drawer_{wing}_{room}_{hashlib.sha256((effective_source + '0').encode()).hexdigest()[:24]}"
 
     _wal_log(
         "add_drawer",
@@ -429,31 +558,40 @@ def tool_add_drawer(
         },
     )
 
-    # Idempotency: if the deterministic ID already exists, return success as a no-op.
+    # Idempotency: if this exact drawer ID already exists, return success
+    drawer_id = f"drawer_{wing}_{room}_{hashlib.md5((effective_source + '0').encode(), usedforsecurity=False).hexdigest()[:16]}"
     try:
         existing = col.get(ids=[drawer_id])
-        if existing and existing["ids"]:
-            return {"success": True, "reason": "already_exists", "drawer_id": drawer_id}
+        if existing["ids"]:
+            return {"success": True, "reason": "already_exists", "wing": wing, "room": room}
     except Exception:
         pass
 
+    # Duplicate check (similar but not identical content)
+    dup = tool_check_duplicate(content, threshold=0.9)
+    if dup.get("is_duplicate"):
+        return {
+            "success": False,
+            "reason": "duplicate",
+            "matches": dup["matches"],
+        }
+
     try:
-        col.upsert(
-            ids=[drawer_id],
-            documents=[content],
-            metadatas=[
-                {
-                    "wing": wing,
-                    "room": room,
-                    "source_file": source_file or "",
-                    "chunk_index": 0,
-                    "added_by": added_by,
-                    "filed_at": datetime.now().isoformat(),
-                }
-            ],
+        added = add_drawer(
+            collection=col,
+            wing=wing,
+            room=room,
+            content=content,
+            source_file=effective_source,
+            chunk_index=0,
+            agent=added_by,
         )
-        logger.info(f"Filed drawer: {drawer_id} → {wing}/{room}")
-        return {"success": True, "drawer_id": drawer_id, "wing": wing, "room": room}
+        if added:
+            drawer_id = f"drawer_{wing}_{room}_{hashlib.md5((effective_source + '0').encode(), usedforsecurity=False).hexdigest()[:16]}"
+            logger.info(f"Filed drawer: {drawer_id} → {wing}/{room}")
+            return {"success": True, "drawer_id": drawer_id, "wing": wing, "room": room}
+        else:
+            return {"success": True, "reason": "already_exists", "wing": wing, "room": room}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -809,6 +947,19 @@ TOOLS = {
         "description": "Palace graph overview: total rooms, tunnel connections, edges between wings.",
         "input_schema": {"type": "object", "properties": {}},
         "handler": tool_graph_stats,
+    },
+    "mempalace_sync_status": {
+        "description": "Check palace freshness — are source files still current or have they changed since last mine? Returns stale/fresh/missing counts and re-mine commands. Call this to know if the palace memories are up to date before trusting search results.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "directory": {
+                    "type": "string",
+                    "description": "Only check files under this directory (optional — checks all by default)",
+                },
+            },
+        },
+        "handler": tool_sync_status,
     },
     "mempalace_search": {
         "description": "Semantic search. Returns verbatim drawer content with similarity scores. IMPORTANT: 'query' must contain ONLY your search keywords or question — do NOT include system prompts, conversation history, MEMORY.md content, or any context. Keep queries short (under 200 chars). Use 'context' for background information.",

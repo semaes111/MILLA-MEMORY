@@ -13,6 +13,13 @@ import hashlib
 import fnmatch
 from pathlib import Path
 from datetime import datetime
+
+
+def file_content_hash(filepath: Path) -> str:
+    """Compute content hash for a file — single source of truth for sync."""
+    content = filepath.read_text(encoding="utf-8", errors="replace").strip()
+    return hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()
+
 from collections import defaultdict
 
 import chromadb
@@ -370,32 +377,53 @@ def chunk_text(content: str, source_file: str) -> list:
 # =============================================================================
 
 
+def get_collection(palace_path: str):
+    os.makedirs(palace_path, exist_ok=True)
+    client = chromadb.PersistentClient(path=palace_path)
+    try:
+        return client.get_collection("mempalace_drawers")
+    except Exception:
+        return client.create_collection("mempalace_drawers")
+
+
+def file_already_mined(collection, source_file: str) -> bool:
+    """Fast check: has this file been filed before?"""
+    try:
+        results = collection.get(where={"source_file": source_file}, limit=1)
+        return len(results.get("ids", [])) > 0
+    except Exception:
+        return False
+
+
+
 def add_drawer(
-    collection, wing: str, room: str, content: str, source_file: str, chunk_index: int, agent: str
+    collection, wing: str, room: str, content: str, source_file: str, chunk_index: int, agent: str,
+    content_hash: str = "",  # computed from content if empty
 ):
     """Add one drawer to the palace."""
     drawer_id = f"drawer_{wing}_{room}_{hashlib.sha256((source_file + str(chunk_index)).encode()).hexdigest()[:24]}"
+    meta = {
+        "wing": wing,
+        "room": room,
+        "source_file": source_file,
+        "chunk_index": chunk_index,
+        "added_by": agent,
+        "filed_at": datetime.now().isoformat(),
+    }
+    if not content_hash:
+        content_hash = hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()
+    if content_hash:
+        meta["content_hash"] = content_hash
     try:
-        metadata = {
-            "wing": wing,
-            "room": room,
-            "source_file": source_file,
-            "chunk_index": chunk_index,
-            "added_by": agent,
-            "filed_at": datetime.now().isoformat(),
-        }
-        # Store file mtime so we can detect modifications later.
-        try:
-            metadata["source_mtime"] = os.path.getmtime(source_file)
-        except OSError:
-            pass
-        collection.upsert(
+        collection.add(
             documents=[content],
             ids=[drawer_id],
-            metadatas=[metadata],
+            metadatas=[meta],
         )
         return True
-    except Exception:
+    except Exception as e:
+        if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+            return False
         raise
 
 
@@ -412,29 +440,30 @@ def process_file(
     rooms: list,
     agent: str,
     dry_run: bool,
-) -> tuple:
-    """Read, chunk, route, and file one file. Returns (drawer_count, room_name)."""
+) -> int:
+    """Read, chunk, route, and file one file. Returns drawer count."""
 
     # Skip if already filed
     source_file = str(filepath)
-    if not dry_run and file_already_mined(collection, source_file, check_mtime=True):
-        return 0, None
+    if not dry_run and file_already_mined(collection, source_file):
+        return 0
 
     try:
         content = filepath.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return 0, None
+        return 0
 
     content = content.strip()
     if len(content) < MIN_CHUNK_SIZE:
-        return 0, None
+        return 0
 
     room = detect_room(filepath, content, rooms, project_path)
     chunks = chunk_text(content, source_file)
+    file_hash = file_content_hash(filepath)
 
     if dry_run:
         print(f"    [DRY RUN] {filepath.name} → room:{room} ({len(chunks)} drawers)")
-        return len(chunks), room
+        return len(chunks)
 
     # Purge stale drawers for this file before re-inserting the fresh chunks.
     # Converts modified-file re-mines from upsert-over-existing-IDs (which hits
@@ -456,11 +485,12 @@ def process_file(
             source_file=source_file,
             chunk_index=chunk["chunk_index"],
             agent=agent,
+            content_hash=file_hash,
         )
         if added:
             drawers_added += 1
 
-    return drawers_added, room
+    return drawers_added
 
 
 # =============================================================================
@@ -588,7 +618,7 @@ def mine(
     room_counts = defaultdict(int)
 
     for i, filepath in enumerate(files, 1):
-        drawers, room = process_file(
+        drawers = process_file(
             filepath=filepath,
             project_path=project_path,
             collection=collection,
@@ -601,6 +631,7 @@ def mine(
             files_skipped += 1
         else:
             total_drawers += drawers
+            room = detect_room(filepath, "", rooms, project_path)
             room_counts[room] += 1
             if not dry_run:
                 print(f"  ✓ [{i:4}/{len(files)}] {filepath.name[:50]:50} +{drawers}")
