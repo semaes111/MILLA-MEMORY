@@ -14,6 +14,14 @@ import chromadb
 logger = logging.getLogger("mempalace_mcp")
 
 
+def safe_query(col, **kwargs):
+    """Run col.query() and return None when there are no hits."""
+    results = col.query(**kwargs)
+    if not results["documents"] or not results["documents"][0]:
+        return None
+    return results
+
+
 class SearchError(Exception):
     """Raised when search cannot proceed (e.g. no palace found)."""
 
@@ -49,19 +57,19 @@ def search(query: str, palace_path: str, wing: str = None, room: str = None, n_r
         if where:
             kwargs["where"] = where
 
-        results = col.query(**kwargs)
+        results = safe_query(col, **kwargs)
 
     except Exception as e:
         print(f"\n  Search error: {e}")
         raise SearchError(f"Search error: {e}") from e
 
+    if results is None:
+        print(f'\n  No results found for: "{query}"')
+        return
+
     docs = results["documents"][0]
     metas = results["metadatas"][0]
     dists = results["distances"][0]
-
-    if not docs:
-        print(f'\n  No results found for: "{query}"')
-        return
 
     print(f"\n{'=' * 60}")
     print(f'  Results for: "{query}"')
@@ -125,9 +133,16 @@ def search_memories(
         if where:
             kwargs["where"] = where
 
-        results = col.query(**kwargs)
+        results = safe_query(col, **kwargs)
     except Exception as e:
         return {"error": f"Search error: {e}"}
+
+    if results is None:
+        return {
+            "query": query,
+            "filters": {"wing": wing, "room": room},
+            "results": [],
+        }
 
     docs = results["documents"][0]
     metas = results["metadatas"][0]

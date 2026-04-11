@@ -24,6 +24,7 @@ from collections import defaultdict
 import chromadb
 
 from .config import MempalaceConfig
+from .searcher import safe_query
 
 
 # ---------------------------------------------------------------------------
@@ -282,16 +283,16 @@ class Layer3:
             kwargs["where"] = where
 
         try:
-            results = col.query(**kwargs)
+            results = safe_query(col, **kwargs)
         except Exception as e:
             return f"Search error: {e}"
+
+        if results is None:
+            return "No results found."
 
         docs = results["documents"][0]
         metas = results["metadatas"][0]
         dists = results["distances"][0]
-
-        if not docs:
-            return "No results found."
 
         lines = [f'## L3 — SEARCH RESULTS for "{query}"']
         for i, (doc, meta, dist) in enumerate(zip(docs, metas, dists), 1):
@@ -338,8 +339,11 @@ class Layer3:
             kwargs["where"] = where
 
         try:
-            results = col.query(**kwargs)
+            results = safe_query(col, **kwargs)
         except Exception:
+            return []
+
+        if results is None:
             return []
 
         hits = []
