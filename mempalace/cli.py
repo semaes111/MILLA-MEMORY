@@ -166,8 +166,13 @@ def cmd_status(args):
 
 
 def cmd_repair(args):
-    """Rebuild palace vector index from SQLite metadata."""
-    import chromadb
+    """Rebuild palace vector index from SQLite metadata.
+
+    ChromaDB-specific: rebuilds the HNSW index. PalaceStore has no graph
+    index to rebuild, so this command intentionally bypasses the backend
+    selector and always targets real ChromaDB.
+    """
+    import chromadb  # always real — PalaceStore doesn't need repair
     import shutil
 
     palace_path = os.path.expanduser(args.palace) if args.palace else MempalaceConfig().palace_path
@@ -273,8 +278,13 @@ def cmd_mcp(args):
 
 
 def cmd_compress(args):
-    """Compress drawers in a wing using AAAK Dialect."""
-    import chromadb
+    """Compress drawers in a wing using AAAK Dialect.
+
+    Experimental — uses direct chromadb import to preserve existing test
+    patterns (``patch.dict("sys.modules", ...)``). Not used on the
+    PalaceStore backend path.
+    """
+    import chromadb  # kept as direct import for sys.modules patchability
     from .dialect import Dialect
 
     palace_path = os.path.expanduser(args.palace) if args.palace else MempalaceConfig().palace_path

@@ -30,7 +30,7 @@ from .config import MempalaceConfig, sanitize_name, sanitize_content
 from .version import __version__
 from .searcher import search_memories
 from .palace_graph import traverse, find_tunnels, graph_stats
-import chromadb
+from ._storage_backend import chromadb
 
 from .knowledge_graph import KnowledgeGraph
 

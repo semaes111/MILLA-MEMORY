@@ -39,10 +39,14 @@ from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
 
-import chromadb
-
-# Add mempal to path
+# Add mempal to path BEFORE importing chromadb through the backend
+# selector so the selector's package resolution works.
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Route chromadb through mempalace's backend selector so setting
+# ``MEMPAL_STORAGE=palace_store`` swaps in palace_store.compat without
+# touching this file. Default (no env var) keeps real chromadb.
+from mempalace._storage_backend import chromadb  # noqa: E402
 
 
 # =============================================================================

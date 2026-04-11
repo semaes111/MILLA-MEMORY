@@ -3,9 +3,9 @@ import shutil
 import tempfile
 from pathlib import Path
 
-import chromadb
 import yaml
 
+from mempalace._storage_backend import chromadb
 from mempalace.miner import mine, scan_project
 from mempalace.palace import file_already_mined
 

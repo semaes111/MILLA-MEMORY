@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 from collections import defaultdict
 
-import chromadb
+from ._storage_backend import chromadb
 
 from .config import MempalaceConfig
 

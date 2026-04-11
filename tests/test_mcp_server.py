@@ -23,7 +23,7 @@ def _get_collection(palace_path, create=False):
     Returns (client, collection) so callers can clean up the client
     when they are done.
     """
-    import chromadb
+    from mempalace._storage_backend import chromadb
 
     client = chromadb.PersistentClient(path=palace_path)
     if create:

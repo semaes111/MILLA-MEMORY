@@ -5,7 +5,8 @@ Consolidates ChromaDB access patterns used by both miners and the MCP server.
 """
 
 import os
-import chromadb
+
+from ._storage_backend import chromadb
 
 SKIP_DIRS = {
     ".git",
