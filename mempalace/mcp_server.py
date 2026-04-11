@@ -31,6 +31,7 @@ from .version import __version__
 from .query_sanitizer import sanitize_query
 from .searcher import search_memories
 from .palace_graph import traverse, find_tunnels, graph_stats
+from .palace import iter_metadatas
 import chromadb
 
 from .knowledge_graph import KnowledgeGraph
@@ -134,6 +135,7 @@ def _no_palace():
     }
 
 
+
 # ==================== READ TOOLS ====================
 
 
@@ -144,36 +146,22 @@ def tool_status():
     count = col.count()
     wings = {}
     rooms = {}
-    batch_size = 5000
-    offset = 0
-    error_info = None
-    while True:
-        try:
-            batch = col.get(include=["metadatas"], limit=batch_size, offset=offset)
-            rows = batch["metadatas"]
-            for m in rows:
-                w = m.get("wing", "unknown")
-                r = m.get("room", "unknown")
-                wings[w] = wings.get(w, 0) + 1
-                rooms[r] = rooms.get(r, 0) + 1
-            offset += len(rows)
-            if len(rows) < batch_size:
-                break
-        except Exception as e:
-            error_info = f"Partial result, failed at offset {offset}: {str(e)}"
-            break
-    result = {
+    total_from_meta = 0
+    for m in iter_metadatas(col):
+        w = m.get("wing", "unknown")
+        r = m.get("room", "unknown")
+        wings[w] = wings.get(w, 0) + 1
+        rooms[r] = rooms.get(r, 0) + 1
+        total_from_meta += 1
+    return {
         "total_drawers": count,
         "wings": wings,
         "rooms": rooms,
+        "partial": total_from_meta < count,
         "palace_path": _config.palace_path,
         "protocol": PALACE_PROTOCOL,
         "aaak_dialect": AAAK_SPEC,
     }
-    if error_info:
-        result["error"] = error_info
-        result["partial"] = True
-    return result
 
 
 # ── AAAK Dialect Spec ─────────────────────────────────────────────────────────
@@ -214,28 +202,9 @@ def tool_list_wings():
     if not col:
         return _no_palace()
     wings = {}
-    batch_size = 5000
-    offset = 0
-    try:
-        col.count()  # verify collection is accessible
-    except Exception as e:
-        return {"wings": {}, "error": str(e)}
-    while True:
-        try:
-            batch = col.get(include=["metadatas"], limit=batch_size, offset=offset)
-            rows = batch["metadatas"]
-            for m in rows:
-                w = m.get("wing", "unknown")
-                wings[w] = wings.get(w, 0) + 1
-            offset += len(rows)
-            if len(rows) < batch_size:
-                break
-        except Exception as e:
-            return {
-                "wings": wings,
-                "error": f"Partial result, failed at offset {offset}: {str(e)}",
-                "partial": True,
-            }
+    for m in iter_metadatas(col):
+        w = m.get("wing", "unknown")
+        wings[w] = wings.get(w, 0) + 1
     return {"wings": wings}
 
 
@@ -244,33 +213,10 @@ def tool_list_rooms(wing: str = None):
     if not col:
         return _no_palace()
     rooms = {}
-    batch_size = 5000
-    offset = 0
     where = {"wing": wing} if wing else None
-    try:
-        col.count()  # verify collection is accessible
-    except Exception as e:
-        return {"wing": wing or "all", "rooms": {}, "error": str(e)}
-    while True:
-        try:
-            kwargs = {"include": ["metadatas"], "limit": batch_size, "offset": offset}
-            if where:
-                kwargs["where"] = where
-            batch = col.get(**kwargs)
-            rows = batch["metadatas"]
-            for m in rows:
-                r = m.get("room", "unknown")
-                rooms[r] = rooms.get(r, 0) + 1
-            offset += len(rows)
-            if len(rows) < batch_size:
-                break
-        except Exception as e:
-            return {
-                "wing": wing or "all",
-                "rooms": rooms,
-                "error": f"Partial result, failed at offset {offset}: {str(e)}",
-                "partial": True,
-            }
+    for m in iter_metadatas(col, where=where):
+        r = m.get("room", "unknown")
+        rooms[r] = rooms.get(r, 0) + 1
     return {"wing": wing or "all", "rooms": rooms}
 
 
@@ -279,31 +225,12 @@ def tool_get_taxonomy():
     if not col:
         return _no_palace()
     taxonomy = {}
-    batch_size = 5000
-    offset = 0
-    try:
-        col.count()  # verify collection is accessible
-    except Exception as e:
-        return {"taxonomy": {}, "error": str(e)}
-    while True:
-        try:
-            batch = col.get(include=["metadatas"], limit=batch_size, offset=offset)
-            rows = batch["metadatas"]
-            for m in rows:
-                w = m.get("wing", "unknown")
-                r = m.get("room", "unknown")
-                if w not in taxonomy:
-                    taxonomy[w] = {}
-                taxonomy[w][r] = taxonomy[w].get(r, 0) + 1
-            offset += len(rows)
-            if len(rows) < batch_size:
-                break
-        except Exception as e:
-            return {
-                "taxonomy": taxonomy,
-                "error": f"Partial result, failed at offset {offset}: {str(e)}",
-                "partial": True,
-            }
+    for m in iter_metadatas(col):
+        w = m.get("wing", "unknown")
+        r = m.get("room", "unknown")
+        if w not in taxonomy:
+            taxonomy[w] = {}
+        taxonomy[w][r] = taxonomy[w].get(r, 0) + 1
     return {"taxonomy": taxonomy}
 
 
