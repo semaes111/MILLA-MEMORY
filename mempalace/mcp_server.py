@@ -57,10 +57,19 @@ if _args.palace:
     os.environ["MEMPALACE_PALACE_PATH"] = os.path.abspath(_args.palace)
 
 _config = MempalaceConfig()
-if _args.palace:
-    _kg = KnowledgeGraph(db_path=os.path.join(_config.palace_path, "knowledge_graph.sqlite3"))
-else:
-    _kg = KnowledgeGraph()
+_kg = None
+
+
+def _get_kg():
+    global _kg
+    if _kg is None:
+        if _args.palace:
+            _kg = KnowledgeGraph(
+                db_path=os.path.join(_config.palace_path, "knowledge_graph.sqlite3")
+            )
+        else:
+            _kg = KnowledgeGraph()
+    return _kg
 
 
 _client_cache = None
@@ -415,7 +424,7 @@ def tool_delete_drawer(drawer_id: str):
 
 def tool_kg_query(entity: str, as_of: str = None, direction: str = "both"):
     """Query the knowledge graph for an entity's relationships."""
-    results = _kg.query_entity(entity, as_of=as_of, direction=direction)
+    results = _get_kg().query_entity(entity, as_of=as_of, direction=direction)
     return {"entity": entity, "as_of": as_of, "facts": results, "count": len(results)}
 
 
@@ -440,7 +449,7 @@ def tool_kg_add(
             "source_closet": source_closet,
         },
     )
-    triple_id = _kg.add_triple(
+    triple_id = _get_kg().add_triple(
         subject, predicate, object, valid_from=valid_from, source_closet=source_closet
     )
     return {"success": True, "triple_id": triple_id, "fact": f"{subject} → {predicate} → {object}"}
@@ -452,7 +461,7 @@ def tool_kg_invalidate(subject: str, predicate: str, object: str, ended: str = N
         "kg_invalidate",
         {"subject": subject, "predicate": predicate, "object": object, "ended": ended},
     )
-    _kg.invalidate(subject, predicate, object, ended=ended)
+    _get_kg().invalidate(subject, predicate, object, ended=ended)
     return {
         "success": True,
         "fact": f"{subject} → {predicate} → {object}",
@@ -462,13 +471,13 @@ def tool_kg_invalidate(subject: str, predicate: str, object: str, ended: str = N
 
 def tool_kg_timeline(entity: str = None):
     """Get chronological timeline of facts, optionally for one entity."""
-    results = _kg.timeline(entity)
+    results = _get_kg().timeline(entity)
     return {"entity": entity or "all", "timeline": results, "count": len(results)}
 
 
 def tool_kg_stats():
     """Knowledge graph overview: entities, triples, relationship types."""
-    return _kg.stats()
+    return _get_kg().stats()
 
 
 # ==================== AGENT DIARY ====================
