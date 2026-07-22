@@ -1,0 +1,29 @@
+version: 1
+owner: Sergio
+memory_root: sergio-memory
+wiki_root: sergio-memory/wiki
+default_language: es-ES
+source_policy:
+  store_originals_in_git: false
+  allowed_pointer_sensitivities:
+    - public
+    - internal
+    - confidential
+    - restricted
+  restricted_requires_pseudonymization: true
+page_types:
+  - person
+  - company
+  - project
+  - decision
+  - legal
+  - medical
+  - financial
+  - research
+  - skill
+  - source
+claim_statuses:
+  - verified
+  - disputed
+  - superseded
+  - draft
