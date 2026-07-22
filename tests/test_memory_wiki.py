@@ -5,7 +5,7 @@ from pathlib import Path
 from tools.memory_wiki import lint, query, status
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 MEMORY_ROOT = REPO_ROOT / "sergio-memory"
 
 

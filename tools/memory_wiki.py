@@ -91,7 +91,11 @@ def _parse_frontmatter(path: Path, root: Path) -> tuple[dict[str, Any], str, lis
         return {}, text, [Finding("error", "frontmatter-missing", rel, "Missing YAML frontmatter")]
     marker = text.find("\n---\n", 4)
     if marker < 0:
-        return {}, text, [Finding("error", "frontmatter-unclosed", rel, "Unclosed YAML frontmatter")]
+        return (
+            {},
+            text,
+            [Finding("error", "frontmatter-unclosed", rel, "Unclosed YAML frontmatter")],
+        )
     raw = text[4:marker]
     body = text[marker + 5 :]
     try:
@@ -143,7 +147,9 @@ def _lint_page(path: Path, memory_root: Path) -> list[Finding]:
         findings.append(Finding("error", "page-field-missing", rel, f"Missing field: {field}"))
 
     if data.get("type") not in PAGE_TYPES:
-        findings.append(Finding("error", "page-type-invalid", rel, f"Invalid type: {data.get('type')}"))
+        findings.append(
+            Finding("error", "page-type-invalid", rel, f"Invalid type: {data.get('type')}")
+        )
     if data.get("status") not in STATUSES:
         findings.append(
             Finding("error", "page-status-invalid", rel, f"Invalid status: {data.get('status')}")
@@ -163,19 +169,27 @@ def _lint_page(path: Path, memory_root: Path) -> list[Finding]:
 
     sources = data.get("sources")
     if not isinstance(sources, list) or not sources:
-        findings.append(Finding("error", "page-sources-invalid", rel, "sources must be a non-empty list"))
+        findings.append(
+            Finding("error", "page-sources-invalid", rel, "sources must be a non-empty list")
+        )
     else:
         for source in sources:
             if not isinstance(source, str):
-                findings.append(Finding("error", "page-source-invalid", rel, "Source path must be text"))
+                findings.append(
+                    Finding("error", "page-source-invalid", rel, "Source path must be text")
+                )
                 continue
             pointer = memory_root / source
             if not pointer.is_file():
                 findings.append(
-                    Finding("error", "page-source-missing", rel, f"Missing source pointer: {source}")
+                    Finding(
+                        "error", "page-source-missing", rel, f"Missing source pointer: {source}"
+                    )
                 )
     if not isinstance(data.get("supersedes"), list):
-        findings.append(Finding("error", "page-supersedes-invalid", rel, "supersedes must be a list"))
+        findings.append(
+            Finding("error", "page-supersedes-invalid", rel, "supersedes must be a list")
+        )
     return findings
 
 
@@ -194,7 +208,9 @@ def _lint_pointer(path: Path, memory_root: Path) -> list[Finding]:
             Finding("error", "pointer-sensitivity-invalid", rel, "Invalid source sensitivity")
         )
     if not SHA256_RE.fullmatch(str(data.get("sha256", ""))):
-        findings.append(Finding("error", "pointer-sha-invalid", rel, "sha256 must be 64 lowercase hex"))
+        findings.append(
+            Finding("error", "pointer-sha-invalid", rel, "sha256 must be 64 lowercase hex")
+        )
     if data.get("immutable") is not True:
         findings.append(Finding("error", "pointer-mutable", rel, "immutable must be true"))
     if not _valid_date(data.get("created")):
@@ -310,7 +326,12 @@ def lint(memory_root: Path) -> list[Finding]:
     for path in required:
         if not path.is_file():
             findings.append(
-                Finding("error", "required-file-missing", _relative(path, memory_root), "Required file is missing")
+                Finding(
+                    "error",
+                    "required-file-missing",
+                    _relative(path, memory_root),
+                    "Required file is missing",
+                )
             )
     for page in _content_pages(memory_root):
         findings.extend(_lint_page(page, memory_root))
@@ -386,7 +407,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=_default_root(), help="Path to sergio-memory")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    lint_parser = subparsers.add_parser("lint", help="Validate structure, provenance, links, and secrets")
+    lint_parser = subparsers.add_parser(
+        "lint", help="Validate structure, provenance, links, and secrets"
+    )
     lint_parser.add_argument("--strict", action="store_true", help="Treat warnings as failures")
     query_parser = subparsers.add_parser("query", help="Search maintained wiki pages")
     query_parser.add_argument("terms")
