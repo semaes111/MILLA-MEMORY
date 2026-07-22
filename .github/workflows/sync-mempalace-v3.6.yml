@@ -1,22 +1,25 @@
 name: One-time sync to MemPalace v3.6.0
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/karpathy-memory-v3.6
-    paths:
-      - .github/workflows/sync-mempalace-v3.6.yml
+      - main
+    types:
+      - opened
+      - reopened
 
 permissions:
   contents: write
 
 jobs:
   sync:
+    if: github.head_ref == 'agent/karpathy-memory-v3.6'
     runs-on: ubuntu-latest
     steps:
       - name: Check out integration branch
         uses: actions/checkout@v4
         with:
+          ref: agent/karpathy-memory-v3.6
           fetch-depth: 0
 
       - name: Merge the audited upstream release
