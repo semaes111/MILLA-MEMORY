@@ -1,0 +1,34 @@
+name: One-time sync to MemPalace v3.6.0
+
+on:
+  push:
+    branches:
+      - agent/karpathy-memory-v3.6
+    paths:
+      - .github/workflows/sync-mempalace-v3.6.yml
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out integration branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge the audited upstream release
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/MemPalace/mempalace.git
+          git fetch --no-tags upstream refs/tags/v3.6.0:refs/tags/upstream-v3.6.0
+          test "$(git rev-parse refs/tags/upstream-v3.6.0)" = "8ab251c452c43f2b07a76a28f2433e258307f571"
+          git merge --no-edit refs/tags/upstream-v3.6.0
+          git rm .github/workflows/sync-mempalace-v3.6.yml
+          git commit -m "Remove one-time upstream sync workflow"
+          git push origin HEAD:agent/karpathy-memory-v3.6
