@@ -6,6 +6,9 @@ __pycache__/
 .pytest_cache/
 mempal.yaml
 .a5c/
+.claude/
+.codex/
+.codex
 
 # Environment
 .env
@@ -33,3 +36,5 @@ venv/
 
 # ChromaDB local data
 *.sqlite3-journal
+.envrc
+.review-logs

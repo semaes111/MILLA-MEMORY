@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/sergio-memory/source-pointer.schema.json",
+  "title": "Sergio Memory source pointer",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "title",
+    "kind",
+    "sensitivity",
+    "locator",
+    "sha256",
+    "created",
+    "immutable"
+  ],
+  "properties": {
+    "$schema": {"type": "string"},
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"},
+    "title": {"type": "string", "minLength": 1},
+    "kind": {"type": "string", "minLength": 1},
+    "sensitivity": {
+      "enum": ["public", "internal", "confidential", "restricted"]
+    },
+    "locator": {"type": "string", "minLength": 1},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "created": {"type": "string", "format": "date"},
+    "immutable": {"const": true}
+  }
+}

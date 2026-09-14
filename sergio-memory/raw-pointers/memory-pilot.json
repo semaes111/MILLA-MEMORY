@@ -1,0 +1,11 @@
+{
+  "$schema": "../schemas/source-pointer.schema.json",
+  "id": "memory-pilot",
+  "title": "Synthetic memory workflow pilot",
+  "kind": "synthetic",
+  "sensitivity": "internal",
+  "locator": "synthetic://memory-pilot",
+  "sha256": "5b7c4f719a4ffdf2a32be8221d9bfa5f6f718f3a302303f7b4692267f9f1a7df",
+  "created": "2026-07-22",
+  "immutable": true
+}
