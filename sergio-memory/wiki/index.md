@@ -16,7 +16,7 @@ No pages yet.
 
 ## Decisions
 
-No pages yet.
+- [[decisions/avatar-identity-protocol]] — Protocolo permanente de identidad de avatar, ficha 3×3 y separación de escena e identidad.
 
 ## Legal
 
