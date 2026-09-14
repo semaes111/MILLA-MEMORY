@@ -1,0 +1,11 @@
+{
+  "$schema": "../schemas/source-pointer.schema.json",
+  "id": "video-masivo-avatar-identidad-2026-09-14",
+  "title": "Decisión de Sergio: ficha 3×3 y bloqueo sistemático de identidad de avatar",
+  "kind": "user-confirmed-project-decision",
+  "sensitivity": "internal",
+  "locator": "ChatGPT Library: libfile_a063fcf116c481918352a54ae59002ab; version 0; VIDEO_MASIVO_Bloqueo_Identidad_v1.md",
+  "sha256": "6922facb3db8cba6b3558bceb74b0b2e1b9ed647f8e69944ddae858b7911cb1b",
+  "created": "2026-09-14",
+  "immutable": true
+}
